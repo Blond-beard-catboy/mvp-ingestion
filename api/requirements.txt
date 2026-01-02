@@ -1,0 +1,4 @@
+flask==2.3.3
+pydantic==1.10.12
+python-dotenv==1.0.0
+werkzeug==2.3.7
