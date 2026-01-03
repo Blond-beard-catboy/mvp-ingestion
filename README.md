@@ -26,3 +26,20 @@ pip install -r api/requirements.txt
 # Скопируй конфигурацию
 cp .env.example .env
 # Отредактируй .env при необходимости
+
+## Day 2: RabbitMQ Producer
+
+### Требования
+Для работы Day 2 требуется RabbitMQ.
+
+#### Установка RabbitMQ:
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt update
+sudo apt install -y rabbitmq-server
+sudo systemctl enable rabbitmq-server
+sudo systemctl start rabbitmq-server
+
+# Включить web-интерфейс (опционально)
+sudo rabbitmq-plugins enable rabbitmq_management

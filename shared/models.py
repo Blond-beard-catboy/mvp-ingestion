@@ -2,7 +2,16 @@ from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from typing import Optional, Dict, Any
 from uuid import uuid4
+import json
 from .utils import now_utc
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    """Кастомный JSON энкодер для datetime"""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat() + 'Z'
+        return super().default(obj)
 
 
 class IncomingEvent(BaseModel):
@@ -40,3 +49,13 @@ class IncomingEvent(BaseModel):
             if (v - now_utc()).total_seconds() > 300:  # 5 минут
                 raise ValueError('occurred_at не может быть более чем на 5 минут в будущем')
         return v
+
+    def serialize_to_json(self) -> bytes:
+        """Сериализация события в JSON bytes"""
+        # Используем кастомный encoder
+        return json.dumps(self.dict(), cls=DateTimeEncoder).encode('utf-8')
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() + 'Z'
+        }
