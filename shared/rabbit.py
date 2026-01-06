@@ -1,7 +1,7 @@
 import pika
 import json
 import logging
-from typing import Optional
+from typing import Optional, Callable
 from pika.adapters.blocking_connection import BlockingChannel
 from pika.spec import BasicProperties
 
@@ -122,3 +122,95 @@ class RabbitMQProducer:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+class RabbitMQConsumer:
+    """Консьюмер для чтения сообщений из RabbitMQ"""
+    
+    def __init__(self, rabbit_url: str):
+        self.rabbit_url = rabbit_url
+        self.connection: Optional[pika.BlockingConnection] = None
+        self.channel: Optional[BlockingChannel] = None
+    
+    def connect(self) -> None:
+        """Установка соединения с RabbitMQ"""
+        if self.connection is None or self.connection.is_closed:
+            self.connection = get_connection(self.rabbit_url)
+            self.channel = self.connection.channel()
+            
+            # Объявляем очередь, если не объявлена
+            self.channel.queue_declare(
+                queue='events',
+                durable=True,
+                arguments={
+                    'x-dead-letter-exchange': '',
+                    'x-dead-letter-routing-key': 'events.dlq'
+                }
+            )
+            
+            # Объявляем DLQ
+            self.channel.queue_declare(
+                queue='events.dlq',
+                durable=True
+            )
+            
+            logger.info("RabbitMQ consumer connected and queues declared")
+    
+    def consume(self, queue_name: str, callback: Callable) -> None:
+        """
+        Начать потребление сообщений из очереди
+        
+        Args:
+            queue_name: Имя очереди
+            callback: Функция для обработки сообщений
+        """
+        self.connect()
+        
+        if self.channel is None:
+            raise RuntimeError("Channel not initialized")
+        
+        # Ограничиваем количество неподтверждённых сообщений
+        self.channel.basic_qos(prefetch_count=1)
+        
+        # Начинаем потребление
+        self.channel.basic_consume(
+            queue=queue_name,
+            on_message_callback=callback,
+            auto_ack=False  # Ручное подтверждение!
+        )
+        
+        logger.info(f"Started consuming from queue '{queue_name}'")
+    
+    def start_consuming(self) -> None:
+        """Запуск бесконечного цикла потребления"""
+        if self.channel is None:
+            raise RuntimeError("Channel not initialized")
+        
+        try:
+            self.channel.start_consuming()
+        except KeyboardInterrupt:
+            logger.info("Consuming stopped by user")
+        except Exception as e:
+            logger.error(f"Error in consuming loop: {e}")
+            raise
+    
+    def ack(self, delivery_tag: int) -> None:
+        """Подтверждение успешной обработки сообщения"""
+        if self.channel is None:
+            raise RuntimeError("Channel not initialized")
+        
+        self.channel.basic_ack(delivery_tag=delivery_tag)
+        logger.debug(f"Message acknowledged: {delivery_tag}")
+    
+    def nack(self, delivery_tag: int, requeue: bool = False) -> None:
+        """Отрицательное подтверждение (сообщение не обработано)"""
+        if self.channel is None:
+            raise RuntimeError("Channel not initialized")
+        
+        self.channel.basic_nack(delivery_tag=delivery_tag, requeue=requeue)
+        logger.warning(f"Message rejected: {delivery_tag}, requeue={requeue}")
+    
+    def close(self) -> None:
+        """Закрытие соединения с RabbitMQ"""
+        if self.connection and self.connection.is_open:
+            self.connection.close()
+            logger.info("RabbitMQ consumer connection closed")

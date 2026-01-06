@@ -2,8 +2,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from typing import Optional, Dict, Any
 import logging
-from datetime import datetime
-import json
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +27,7 @@ class PostgresClient:
                 logger.error(f"Failed to connect to PostgreSQL: {e}")
                 self.conn = None
                 raise
-        
-        return self.conn  # Возвращаем соединение для удобства
-       
+    
     def insert_event(self, event_data: Dict[str, Any]) -> bool:
         """
         Вставка события с проверкой идемпотентности
@@ -43,22 +40,17 @@ class PostgresClient:
         """
         self.connect()
         
-        # Подготавливаем данные для вставки
-        # Преобразуем время в правильный формат для PostgreSQL
+        # Обрабатываем occurred_at
         occurred_at = event_data.get('occurred_at')
         
-        # Если это datetime объект, преобразуем в строку без 'Z' в конце
         if isinstance(occurred_at, datetime):
-            # Используем isoformat() без добавления 'Z'
+            # Если есть временная зона, конвертируем в UTC и затем убираем временную зону
+            if occurred_at.tzinfo is not None:
+                occurred_at = occurred_at.astimezone(timezone.utc).replace(tzinfo=None)
             occurred_at_str = occurred_at.isoformat()
-            # Убедимся, что нет 'Z' в конце
-            if occurred_at_str.endswith('Z'):
-                occurred_at_str = occurred_at_str[:-1]
         else:
             # Если это строка, убираем 'Z' если есть
-            occurred_at_str = str(occurred_at)
-            if occurred_at_str.endswith('Z'):
-                occurred_at_str = occurred_at_str[:-1]
+            occurred_at_str = str(occurred_at).rstrip('Z')
         
         # Для поля payload используем Json адаптер
         payload = event_data.get('payload', {})
@@ -102,9 +94,10 @@ class PostgresClient:
             raise
     
     def close(self):
-        """Закрытие соединения"""
+        """Закрытие соединения с PostgreSQL"""
         if self.conn and not self.conn.closed:
             self.conn.close()
+            logger.debug("PostgreSQL connection closed")
     
     def __enter__(self):
         self.connect()

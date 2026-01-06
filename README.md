@@ -82,5 +82,16 @@ python scripts/test_idempotency.py
 
 # Проверить вручную
 psql $POSTGRES_URL -c "SELECT COUNT(*) FROM events;"
-    ```
+```
 
+## День 4 — Worker v1: Потребление и сохранение событий
+
+### Цель
+Создать воркер, который читает события из RabbitMQ, валидирует их и сохраняет в PostgreSQL.
+
+### Запуск воркера
+
+#### 1. Установите зависимости:
+```bash
+pip install -r worker/requirements.txt
+```
