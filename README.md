@@ -95,3 +95,20 @@ psql $POSTGRES_URL -c "SELECT COUNT(*) FROM events;"
 ```bash
 pip install -r worker/requirements.txt
 ```
+
+## 🐳 Docker Compose (День 5)
+
+Для запуска зависимостей через Docker Compose:
+
+### Быстрый старт
+
+```bash
+# Запуск всех сервисов
+./scripts/docker-compose-up.sh
+
+# Проверка состояния
+./scripts/check-docker-services.sh
+
+# Остановка
+./scripts/docker-compose-down.sh
+```

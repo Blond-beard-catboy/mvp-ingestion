@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: ingestion-rabbitmq
+    ports:
+      - "5672:5672"    # AMQP протокол
+      - "15672:15672"  # Web UI
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ingestion-network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: ingestion-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=events_user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=events_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U events_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ingestion-network
+
+  mysql:
+    image: mysql:8.0
+    container_name: ingestion-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=events_projection
+      - MYSQL_USER=events_user
+      - MYSQL_PASSWORD=password
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ingestion-network
+
+volumes:
+  rabbitmq_data:
+  postgres_data:
+  mysql_data:
+
+networks:
+  ingestion-network:
+    driver: bridge
