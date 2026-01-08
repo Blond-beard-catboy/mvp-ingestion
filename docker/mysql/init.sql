@@ -1,8 +1,7 @@
--- Создание базы данных проекций (будет использоваться в День 7)
-CREATE DATABASE IF NOT EXISTS events_projection;
+-- Убедимся, что используем правильную базу данных
 USE events_projection;
 
--- Таблица проекций событий (предварительная структура)
+-- Создание таблицы проекций событий
 CREATE TABLE IF NOT EXISTS events_projection (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     event_id VARCHAR(255) UNIQUE NOT NULL,
@@ -17,6 +16,8 @@ CREATE TABLE IF NOT EXISTS events_projection (
     INDEX idx_event_type (event_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Права для пользователя
-GRANT ALL PRIVILEGES ON events_projection.* TO 'events_user'@'%';
-FLUSH PRIVILEGES;
+-- Комментарии к таблице (MySQL 8.0+)
+ALTER TABLE events_projection 
+    COMMENT = 'Таблица проекций событий для быстрого чтения';
+
+-- Права для пользователя уже заданы через переменные окружения

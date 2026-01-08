@@ -1,0 +1,23 @@
+# Игнорируем ненужные файлы
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+.vscode/
+.idea/
+*.log
+*.sqlite3
+
+# Игнорируем локальные настройки
+.env
+.env.local
+
+# Игнорируем данные и временные файлы
+data/
+tmp/
+temp/

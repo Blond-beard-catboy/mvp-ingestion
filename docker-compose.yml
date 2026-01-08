@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # Инфраструктура (уже есть)
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
     container_name: ingestion-rabbitmq
@@ -59,6 +60,66 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - ingestion-network
+
+  # API сервис (НОВЫЙ)
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: ingestion-api
+    ports:
+      - "5000:5000"
+    environment:
+      # Используем имена сервисов Docker вместо localhost
+      - RABBIT_URL=amqp://guest:guest@rabbitmq:5672/
+      - POSTGRES_URL=postgresql://events_user:password@postgres:5432/events_db
+      - MYSQL_URL=mysql://events_user:password@mysql:3306/events_projection
+      - RABBIT_QUEUE_EVENTS=events
+      - RABBIT_QUEUE_DLQ=events.dlq
+      - MAX_BODY_BYTES=1000000
+      - FLASK_ENV=production
+      - LOG_LEVEL=INFO
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ingestion-network
+
+  # Worker сервис (НОВЫЙ)
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: ingestion-worker
+    environment:
+      # Используем имена сервисов Docker вместо localhost
+      - RABBIT_URL=amqp://guest:guest@rabbitmq:5672/
+      - POSTGRES_URL=postgresql://events_user:password@postgres:5432/events_db
+      - MYSQL_URL=mysql://events_user:password@mysql:3306/events_projection
+      - RABBIT_QUEUE_EVENTS=events
+      - RABBIT_QUEUE_DLQ=events.dlq
+      - WORKER_PREFETCH_COUNT=1
+      - WORKER_RECONNECT_DELAY=5
+      - MAX_PROCESSING_ATTEMPTS=3
+      - LOG_LEVEL=INFO
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
     networks:
       - ingestion-network
 
