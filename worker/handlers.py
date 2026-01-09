@@ -5,17 +5,19 @@ from typing import Dict, Any
 
 from shared.models import IncomingEvent
 from shared.db_postgres import PostgresClient
+from shared.db_mysql import MySQLClient
 
 logger = logging.getLogger(__name__)
 
 
-def handle_event(message_body: bytes, pg_client: PostgresClient) -> bool:
+def handle_event(message_body: bytes, pg_client: PostgresClient, mysql_client: MySQLClient = None) -> bool:
     """
     Обработка одного события
     
     Args:
         message_body: Тело сообщения из RabbitMQ (bytes)
         pg_client: Клиент PostgreSQL
+        mysql_client: Клиент MySQL (опционально, для проекции)
         
     Returns:
         bool: True если событие успешно обработано, False если ошибка
@@ -33,18 +35,29 @@ def handle_event(message_body: bytes, pg_client: PostgresClient) -> bool:
         # Подготавливаем данные для PostgreSQL
         event_dict = event.dict()
         
-        # Преобразуем occurred_at в правильный формат (убираем 'Z')
-        # occurred_at = event_dict.get('occurred_at')
-        # if isinstance(occurred_at, str) and occurred_at.endswith('Z'):
-        #     event_dict['occurred_at'] = occurred_at[:-1]
-        
-        # Сохраняем в PostgreSQL
+        # Сохраняем в PostgreSQL (source of truth)
         inserted = pg_client.insert_event(event_dict)
         
         if inserted:
             logger.info(f"Event saved to PostgreSQL: {event.event_id}")
         else:
             logger.info(f"Event already exists (idempotency): {event.event_id}")
+        
+        # BEST-EFFORT: Пытаемся сохранить в MySQL проекцию
+        if mysql_client:
+            try:
+                mysql_success = mysql_client.upsert_projection(event_dict)
+                if mysql_success:
+                    logger.info(f"Event projection saved to MySQL: {event.event_id}")
+                else:
+                    logger.warning(f"Failed to save event projection to MySQL: {event.event_id}")
+                    # НЕ ПРЕРЫВАЕМ ВЫПОЛНЕНИЕ!
+                    # MySQL проекция - best-effort, продолжаем работу
+            except Exception as e:
+                logger.error(f"MySQL projection error (non-critical): {e}", exc_info=False)
+                # НЕ ПРЕРЫВАЕМ ВЫПОЛНЕНИЕ!
+        else:
+            logger.debug("MySQL client not available, skipping projection")
         
         return True
         

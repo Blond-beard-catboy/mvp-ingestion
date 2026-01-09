@@ -124,3 +124,32 @@ pip install -r worker/requirements.txt
 # Или вручную
 docker-compose up --build -d
 ```
+
+## День 7 — MySQL Projection (Best-Effort)
+
+### Архитектура
+
+Клиент -> API -> RabbitMQ -> Worker -> PostgreSQL (source of truth) -> MySQL (best-effort projection)
+
+
+### Концепция
+
+- **PostgreSQL** — основной источник истины (source of truth)
+  - Всегда получает события первыми
+  - Гарантирует идемпотентность через `ON CONFLICT`
+  - Критически важен для работы системы
+
+- **MySQL** — проекция для быстрого чтения (projection)
+  - Best-effort репликация: если MySQL недоступен, система продолжает работать
+  - Используется для аналитики, отчетов, быстрого доступа к данным
+  - Данные могут быть неполными (eventual consistency)
+
+### Настройки
+
+```env
+# Обязательно
+POSTGRES_URL=postgresql://events_user:password@postgres:5432/events_db
+
+# Опционально (система работает и без MySQL)
+MYSQL_URL=mysql://events_user:password@mysql:3306/events_projection
+```

@@ -4,6 +4,7 @@ import logging
 import signal
 import time
 from typing import Optional
+# from config import Config
 
 # Добавляем корневую директорию проекта в путь Python
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -12,6 +13,7 @@ import pika
 from worker.config import Config
 from shared.rabbit import RabbitMQConsumer
 from shared.db_postgres import PostgresClient
+from shared.db_mysql import MySQLClient  # НОВОЕ: импорт MySQL клиента
 from worker.handlers import handle_event
 
 # Настройка логгера
@@ -34,6 +36,7 @@ class EventWorker:
         self.running = False
         self.rabbit_consumer: Optional[RabbitMQConsumer] = None
         self.pg_client: Optional[PostgresClient] = None
+        self.mysql_client: Optional[MySQLClient] = None  # НОВОЕ: клиент MySQL
         
     def setup_signal_handlers(self):
         """Настройка обработчиков сигналов для graceful shutdown"""
@@ -50,12 +53,15 @@ class EventWorker:
         
         if self.pg_client:
             self.pg_client.close()
+        
+        if self.mysql_client:
+            self.mysql_client.close()
     
     def connect_to_services(self):
-        """Подключение к RabbitMQ и PostgreSQL"""
+        """Подключение к RabbitMQ, PostgreSQL и MySQL"""
         logger.info("Connecting to services...")
         
-        # Подключаемся к PostgreSQL
+        # Подключаемся к PostgreSQL (source of truth)
         try:
             self.pg_client = PostgresClient(self.config.POSTGRES_URL)
             self.pg_client.connect()
@@ -63,6 +69,19 @@ class EventWorker:
         except Exception as e:
             logger.error(f"❌ Failed to connect to PostgreSQL: {e}")
             raise
+        
+        # НОВОЕ: Подключаемся к MySQL (best-effort проекция)
+        if self.config.MYSQL_URL:
+            try:
+                self.mysql_client = MySQLClient(self.config.MYSQL_URL)
+                self.mysql_client.connect()
+                logger.info("✅ Connected to MySQL (projection)")
+            except Exception as e:
+                # MySQL НЕ обязателен для работы воркера
+                logger.warning(f"⚠️  Failed to connect to MySQL (projection will be skipped): {e}")
+                self.mysql_client = None
+        else:
+            logger.warning("⚠️  MYSQL_URL not set, MySQL projection disabled")
         
         # Подключаемся к RabbitMQ
         try:
@@ -86,11 +105,11 @@ class EventWorker:
         logger.debug(f"Received message with delivery tag: {method.delivery_tag}")
         
         try:
-            # Обрабатываем событие
-            success = handle_event(body, self.pg_client)
+            # Обрабатываем событие с передачей обоих клиентов
+            success = handle_event(body, self.pg_client, self.mysql_client)
             
             if success:
-                # Подтверждаем успешную обработку
+                # Подтверждаем успешную обработку (только если PostgreSQL записан)
                 ch.basic_ack(delivery_tag=method.delivery_tag)
                 logger.debug(f"Message acknowledged: {method.delivery_tag}")
             else:
@@ -106,6 +125,7 @@ class EventWorker:
     def run(self):
         """Основной цикл работы воркера"""
         logger.info("Starting Event Worker...")
+        logger.info("Architecture: PostgreSQL (source of truth) + MySQL (best-effort projection)")
         self.setup_signal_handlers()
         self.running = True
         
@@ -129,6 +149,7 @@ class EventWorker:
                     )
                     
                     logger.info(f"✅ Worker started, listening to queue: {self.config.RABBIT_QUEUE_EVENTS}")
+                    logger.info(f"✅ MySQL projection: {'ENABLED' if self.mysql_client else 'DISABLED'}")
                     logger.info("Press Ctrl+C to stop")
                     
                     # Запускаем бесконечный цикл обработки
@@ -155,6 +176,10 @@ class EventWorker:
                 if self.pg_client:
                     self.pg_client.close()
                     self.pg_client = None
+                
+                if self.mysql_client:
+                    self.mysql_client.close()
+                    self.mysql_client = None
         
         logger.info("Worker stopped")
 

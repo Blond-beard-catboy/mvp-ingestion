@@ -1,6 +1,3 @@
--- Убедимся, что используем правильную базу данных
-USE events_projection;
-
 -- Создание таблицы проекций событий
 CREATE TABLE IF NOT EXISTS events_projection (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -13,11 +10,10 @@ CREATE TABLE IF NOT EXISTS events_projection (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_event_id (event_id),
     INDEX idx_created_at (created_at),
-    INDEX idx_event_type (event_type)
+    INDEX idx_event_type (event_type),
+    INDEX idx_source (source)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Комментарии к таблице (MySQL 8.0+)
+-- Комментарии к таблице
 ALTER TABLE events_projection 
-    COMMENT = 'Таблица проекций событий для быстрого чтения';
-
--- Права для пользователя уже заданы через переменные окружения
+    COMMENT = 'Проекция событий для быстрого чтения (best-effort replication)';
