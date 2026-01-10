@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .utils import retry, RetryConfig, is_retryable_error
 import logging
 from typing import Dict, Any, Optional
 import json
@@ -198,10 +199,72 @@ class MySQLClient:
         retryable_errors = [2003, 2006, 2013, 1213]
         return error.errno in retryable_errors
     
+    @retry(**RetryConfig.for_mysql())
+    def upsert_projection_with_retry(self, event_data: Dict[str, Any]) -> bool:
+        """
+        Best-effort вставка с повторными попытками для transient ошибок
+        
+        Args:
+            event_data: Словарь с данными события
+            
+        Returns:
+            bool: True если операция успешна, False если non-retryable ошибка
+        """
+        try:
+            return self.upsert_projection(event_data)
+        except Exception as e:
+            # Если это retryable ошибка - пробрасываем дальше для retry декоратора
+            if is_retryable_error(e):
+                raise
+            
+            # Non-retryable ошибки - просто логируем и возвращаем False
+            logger.error(f"Non-retryable MySQL error in upsert_projection_with_retry: {e}")
+            return False
+    
+    def _is_retryable_mysql_error(self, error: Exception) -> bool:
+        """
+        Проверяет, является ли ошибка MySQL retryable
+        
+        Args:
+            error: Исключение
+            
+        Returns:
+            bool: True если ошибка retryable
+        """
+        if not hasattr(error, 'errno'):
+            return False
+        
+        retryable_errors = [
+            # Connection errors
+            2002,  # Can't connect to MySQL server
+            2003,  # Connection refused
+            2006,  # MySQL server has gone away
+            2013,  # Lost connection to MySQL server
+            2026,  # SSL connection error
+            
+            # Lock/timeout errors
+            1205,  # Lock wait timeout exceeded
+            1213,  # Deadlock found
+            
+            # Resource/temporary errors
+            1040,  # Too many connections
+            1159,  # Delayed write failed
+            1161,  # Table is read only
+            1290,  # Read-only mode
+        ]
+        
+        return error.errno in retryable_errors
+    
     def close(self):
         """Закрытие пула соединений"""
         if self.connection_pool:
-            self.connection_pool.close()
+            # Для MySQLConnectionPool используем _remove_connections
+            try:
+                self.connection_pool._remove_connections()  # Закрывает все соединения в пуле
+            except AttributeError:
+                # Если метод отсутствует, просто обнуляем ссылку
+                pass
+            self.connection_pool = None
             logger.info("MySQL connection pool closed")
     
     def __enter__(self):
