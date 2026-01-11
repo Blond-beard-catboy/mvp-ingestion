@@ -124,22 +124,35 @@ class RabbitMQProducer:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
+
 def publish_to_dlq(rabbit_url: str, original_message: bytes, error_info: dict, queue_name: str = "events.dlq"):
-    """Публикация сообщения в Dead Letter Queue
-    Args:
-    rabbit_url: URL RabbitMQ
-    original_message: Оригинальное сообщение (bytes)
-    error_info: Информация об ошибке (dict)
-    queue_name: Имя DLQ (по умолчанию 'events.dlq')
     """
-    # Формируем обогащенное сообщение для DLQ
+    Публикация сообщения в Dead Letter Queue
+    
+    Args:
+        rabbit_url: URL RabbitMQ
+        original_message: Оригинальное сообщение (bytes)
+        error_info: Информация об ошибке (dict)
+        queue_name: Имя DLQ (по умолчанию 'events.dlq')
+    """
+    # Делаем безопасный decode
+    try:
+        original_decoded = original_message.decode('utf-8')
+    except UnicodeDecodeError:
+        # Если не UTF-8, показываем как hex
+        original_decoded = original_message.hex()
+    
+    # Формируем валидный JSON
     dlq_message = {
-        "original_message": original_message.decode('utf-8', errors='replace'),
+        "original_message": original_decoded,
         "error_info": error_info,
         "timestamp": datetime.utcnow().isoformat(),
         "queue": "events"
     }
-        
+    
+    # Получаем correlation_id из error_info
+    correlation_id = error_info.get('correlation_id')
+    
     # Публикуем в DLQ
     producer = RabbitMQProducer(rabbit_url)
     producer.publish(
@@ -147,10 +160,12 @@ def publish_to_dlq(rabbit_url: str, original_message: bytes, error_info: dict, q
         message_body=json.dumps(dlq_message).encode('utf-8'),
         headers={
             "x-death-reason": error_info.get("reason", "unknown"),
-            "x-original-queue": "events"
+            "x-original-queue": "events",
+            "correlation_id": correlation_id if correlation_id else "unknown"
         }
     )
     producer.close()
+
 
 class RabbitMQConsumer:
     """Консьюмер для чтения сообщений из RabbitMQ"""

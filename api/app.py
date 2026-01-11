@@ -1,11 +1,13 @@
 import sys
 import os
 import json
+import uuid
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
+from shared.logging import set_correlation_id, get_correlation_id
 
 from shared.models import IncomingEvent
 from shared.logging import setup_logging
@@ -14,19 +16,28 @@ from api.config import Config
 
 app = Flask(__name__)
 app.config.from_object(Config)
-logger = setup_logging(__name__, Config.LOG_LEVEL)
+logger = setup_logging(__name__, Config.LOG_LEVEL, json_format=Config.JSON_LOGS)
 
 # Инициализация RabbitMQ продюсера
 rabbit_producer = RabbitMQProducer(Config.RABBIT_URL)
 
 
 @app.before_request
-def validate_content_length():
-    """Проверка размера тела запроса"""
-    if request.content_length and request.content_length > Config.MAX_BODY_BYTES:
-        raise RequestEntityTooLarge(
-            f"Request body too large. Max size is {Config.MAX_BODY_BYTES} bytes"
-        )
+def before_request():
+    """Установка correlation_id для каждого запроса"""
+    # Берем из заголовка или генерируем новый
+    correlation_id = request.headers.get('X-Correlation-ID', str(uuid.uuid4()))
+    set_correlation_id(correlation_id)
+    g.correlation_id = correlation_id
+
+
+@app.after_request
+def after_request(response):
+    """Добавляем correlation_id в заголовки ответа"""
+    correlation_id = get_correlation_id()
+    if correlation_id:
+        response.headers['X-Correlation-ID'] = correlation_id
+    return response
 
 
 @app.route('/health', methods=['GET'])
@@ -50,6 +61,8 @@ def health_check():
 @app.route('/events', methods=['POST'])
 def receive_event():
     """Приём события от клиента"""
+    correlation_id = get_correlation_id()  # Получаем correlation_id
+    
     if not request.is_json:
         raise BadRequest("Content-Type must be application/json")
     
@@ -65,15 +78,18 @@ def receive_event():
         logger.warning(f"Validation failed: {str(e)}")
         raise BadRequest(f"Invalid event data: {str(e)}")
     
+    # Логируем с correlation_id
     logger.info(
         f"Event received: id={event.event_id}, "
-        f"type={event.event_type}, source={event.source}"
+        f"type={event.event_type}, source={event.source}, "
+        f"correlation_id={correlation_id}",
+        extra={'event_id': event.event_id, 'correlation_id': correlation_id}
     )
     
     # Сериализуем событие в JSON
     message_body = event.serialize_to_json()
     
-    # Отправляем в RabbitMQ
+    # Отправляем в RabbitMQ с correlation_id в заголовках
     try:
         rabbit_producer.publish(
             queue_name=Config.RABBIT_QUEUE_EVENTS,
@@ -82,13 +98,14 @@ def receive_event():
                 'event_id': event.event_id,
                 'event_type': event.event_type,
                 'source': event.source,
-                'schema_version': str(event.schema_version)
+                'schema_version': str(event.schema_version),
+                'correlation_id': correlation_id  # Добавляем correlation_id
             }
         )
-        logger.info(f"Event {event.event_id} published to RabbitMQ")
+        logger.info(f"Event {event.event_id} published to RabbitMQ, correlation: {correlation_id}")
         
     except Exception as e:
-        logger.error(f"Failed to publish event to RabbitMQ: {e}")
+        logger.error(f"Failed to publish event to RabbitMQ: {e}, correlation: {correlation_id}")
         return jsonify({
             "error": "Internal Server Error",
             "message": "Failed to process event"
@@ -96,6 +113,7 @@ def receive_event():
     
     return jsonify({
         "event_id": event.event_id,
+        "correlation_id": correlation_id,  # Добавляем в ответ
         "status": "accepted",
         "message": "Event published to queue"
     }), 202

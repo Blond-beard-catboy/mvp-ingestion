@@ -153,7 +153,7 @@ POSTGRES_URL=postgresql://events_user:password@postgres:5432/events_db
 # Опционально (система работает и без MySQL)
 MYSQL_URL=mysql://events_user:password@mysql:3306/events_projection
 ```
-## 🔄 Retry Policy (Day 8)
+## 🔄 Retry Policy (День 8)
 
 ### Цель
 Обеспечить надежную запись в MySQL проекцию при transient (временных) ошибках.

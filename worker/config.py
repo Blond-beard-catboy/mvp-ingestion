@@ -12,10 +12,11 @@ class Config:
     # MySQL
     MYSQL_URL = os.getenv("MYSQL_URL", "mysql://events_user:password@localhost:3306/events_projection")
     
-    # Worker settings (ДОБАВЬТЕ ЭТИ СТРОКИ)
+    # Worker settings
     WORKER_PREFETCH_COUNT = int(os.getenv("WORKER_PREFETCH_COUNT", "1"))
     WORKER_RECONNECT_DELAY = int(os.getenv("WORKER_RECONNECT_DELAY", "5"))
     MAX_PROCESSING_ATTEMPTS = int(os.getenv("MAX_PROCESSING_ATTEMPTS", "3"))
     
     # Logging
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    LOG_FORMAT = os.getenv("LOG_FORMAT", "plain")  # 'plain' или 'json'

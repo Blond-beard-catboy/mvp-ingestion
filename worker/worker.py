@@ -12,8 +12,8 @@ import pika
 from worker.config import Config
 from shared.rabbit import RabbitMQConsumer
 from shared.db_postgres import PostgresClient
-from shared.db_mysql import MySQLClient  # НОВОЕ: импорт MySQL клиента
-# from worker.handlers import handle_event
+from shared.db_mysql import MySQLClient
+from shared.logging import set_correlation_id, setup_logging, clear_correlation_id
 from worker.handlers import handle_event_with_dlq
 
 # Настройка логгера
@@ -25,7 +25,7 @@ logging.basicConfig(
     ]
 )
 
-logger = logging.getLogger(__name__)
+logger = setup_logging(__name__, Config.LOG_LEVEL, json_format=Config.JSON_LOGS)
 
 
 class EventWorker:
@@ -36,7 +36,7 @@ class EventWorker:
         self.running = False
         self.rabbit_consumer: Optional[RabbitMQConsumer] = None
         self.pg_client: Optional[PostgresClient] = None
-        self.mysql_client: Optional[MySQLClient] = None  # НОВОЕ: клиент MySQL
+        self.mysql_client: Optional[MySQLClient] = None
         
     def setup_signal_handlers(self):
         """Настройка обработчиков сигналов для graceful shutdown"""
@@ -70,7 +70,7 @@ class EventWorker:
             logger.error(f"❌ Failed to connect to PostgreSQL: {e}")
             raise
         
-        # НОВОЕ: Подключаемся к MySQL (best-effort проекция)
+        # Подключаемся к MySQL (best-effort проекция)
         if self.config.MYSQL_URL:
             try:
                 self.mysql_client = MySQLClient(self.config.MYSQL_URL)
@@ -94,69 +94,88 @@ class EventWorker:
     
     def process_message(self, ch, method, properties, body):
         """Обработка сообщения с отправкой в DLQ при ошибках"""
-        logger.debug(f"Received message: {method.delivery_tag}")
+        # Получаем correlation_id из заголовков RabbitMQ
+        correlation_id = None
+        if properties.headers:
+            correlation_id = properties.headers.get('correlation_id')
         
-        # Используем новую функцию с DLQ
-        success = handle_event_with_dlq(
-            body, 
-            self.pg_client, 
-            self.mysql_client,
-            self.config.RABBIT_URL  # Передаем URL для DLQ
+        # Устанавливаем correlation_id для текущего потока
+        if correlation_id:
+            set_correlation_id(correlation_id)
+        
+        logger.info(
+            f"Received message: {method.delivery_tag}, correlation: {correlation_id}"
         )
         
-        if success:
-            ch.basic_ack(delivery_tag=method.delivery_tag)
-            logger.debug(f"Message acknowledged: {method.delivery_tag}")
-        else:
-            # Уже отправлено в DLQ, отклоняем без повторной попытки
+        try:
+            # Используем функцию с DLQ
+            success = handle_event_with_dlq(
+                body, 
+                self.pg_client, 
+                self.mysql_client,
+                self.config.RABBIT_URL
+            )
+            
+            if success:
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+                logger.info(f"Message acknowledged: {method.delivery_tag}, correlation: {correlation_id}")
+            else:
+                # Уже отправлено в DLQ, отклоняем без повторной попытки
+                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+                logger.warning(f"Message sent to DLQ: {method.delivery_tag}, correlation: {correlation_id}")
+                
+        except Exception as e:
+            logger.error(f"Unexpected error processing message: {e}, correlation: {correlation_id}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-            logger.warning(f"Message sent to DLQ: {method.delivery_tag}")
-        
+        finally:
+            # Очищаем correlation_id
+            clear_correlation_id()
+    
     def run(self):
         """Основной цикл работы воркера"""
         logger.info("Starting Event Worker...")
         logger.info("Architecture: PostgreSQL (source of truth) + MySQL (best-effort projection)")
         self.setup_signal_handlers()
         self.running = True
-            
+        
         while self.running:
             try:
                 # Подключаемся к сервисам
                 self.connect_to_services()
-            
+                
                 # Настраиваем обработку сообщений
                 if self.rabbit_consumer.channel:
                     # Ограничиваем количество неподтверждённых сообщений
                     self.rabbit_consumer.channel.basic_qos(
                         prefetch_count=self.config.WORKER_PREFETCH_COUNT
                     )
-                        
+                    
                     # Начинаем слушать очередь
                     self.rabbit_consumer.channel.basic_consume(
                         queue=self.config.RABBIT_QUEUE_EVENTS,
                         on_message_callback=self.process_message,
                         auto_ack=False  # Важно: ручное подтверждение!
                     )
-                        
+                    
                     logger.info(f"✅ Worker started, listening to queue: {self.config.RABBIT_QUEUE_EVENTS}")
                     logger.info(f"✅ MySQL projection: {'ENABLED' if self.mysql_client else 'DISABLED'}")
                     logger.info("Press Ctrl+C to stop")
-                        
-                        # Запускаем бесконечный цикл обработки
+                    
+                    # Запускаем бесконечный цикл обработки
                     self.rabbit_consumer.channel.start_consuming()
-                        
+                    
             except pika.exceptions.AMQPConnectionError as e:
                 logger.error(f"RabbitMQ connection error: {e}")
                 if self.running:
                     logger.info(f"Reconnecting in {self.config.WORKER_RECONNECT_DELAY} seconds...")
                     time.sleep(self.config.WORKER_RECONNECT_DELAY)
-                        
+                    
             except Exception as e:
                 logger.error(f"Unexpected error: {e}")
                 if self.running:
                     logger.info(f"Restarting in {self.config.WORKER_RECONNECT_DELAY} seconds...")
                     time.sleep(self.config.WORKER_RECONNECT_DELAY)
-                        
+                    
             finally:
                 # Закрываем соединения
                 if self.rabbit_consumer:
@@ -170,8 +189,8 @@ class EventWorker:
                 if self.mysql_client:
                     self.mysql_client.close()
                     self.mysql_client = None
-            
-            logger.info("Worker stopped")
+        
+        logger.info("Worker stopped")
 
     def stop(self):
         """Остановка воркера"""
