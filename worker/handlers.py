@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Dict, Any
 from datetime import datetime
+from pydantic import ValidationError
 
 from shared.models import IncomingEvent
 from shared.db_postgres import PostgresClient
@@ -111,12 +112,90 @@ def _attempt_mysql_projection_with_retry(event_dict: Dict[str, Any], mysql_clien
     return False
 
 
-def handle_event(
-    message_body: bytes,
-    pg_client: PostgresClient,
-    mysql_client: MySQLClient = None
-) -> bool:
+# def handle_event(
+#     message_body: bytes,
+#     pg_client: PostgresClient,
+#     mysql_client: MySQLClient = None
+# ) -> bool:
+#     """
+#     Обработка одного события (совместимость с существующим кодом)
+#     """
+#     return handle_event_with_retry(message_body, pg_client, mysql_client)
+
+def handle_event_with_dlq(message_body: bytes, pg_client: PostgresClient, 
+                         mysql_client: MySQLClient = None, rabbit_url: str = None) -> bool:
     """
-    Обработка одного события (совместимость с существующим кодом)
+    Обработка события с отправкой невалидных сообщений в DLQ
+    
+    Args:
+        message_body: Тело сообщения
+        pg_client: Клиент PostgreSQL
+        mysql_client: Клиент MySQL
+        rabbit_url: URL RabbitMQ для отправки в DLQ
+    
+    Returns:
+        bool: True если успешно, False если отправлено в DLQ
     """
-    return handle_event_with_retry(message_body, pg_client, mysql_client)
+    try:
+        # Парсинг JSON
+        message_str = message_body.decode('utf-8')
+        raw_data = json.loads(message_str)
+        
+        # Валидация
+        event = IncomingEvent(**raw_data)
+        event_dict = event.dict()
+        
+        # Запись в PostgreSQL
+        inserted = pg_client.insert_event(event_dict)
+        
+        if inserted:
+            logger.info(f"Event saved to PostgreSQL: {event.event_id}")
+        else:
+            logger.info(f"Event already exists: {event.event_id}")
+        
+        # MySQL проекция (best-effort)
+        if mysql_client:
+            _attempt_mysql_projection_with_retry(event_dict, mysql_client)
+        
+        return True
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON: {e}")
+        if rabbit_url:
+            _send_to_dlq(message_body, rabbit_url, {
+                "reason": "invalid_json",
+                "error": str(e),
+                "exception_type": "JSONDecodeError"
+            })
+        return False
+        
+    except ValidationError as e:
+        logger.error(f"Validation error: {e}")
+        if rabbit_url:
+            _send_to_dlq(message_body, rabbit_url, {
+                "reason": "validation_error",
+                "error": str(e),
+                "exception_type": "ValidationError",
+                "errors": e.errors() if hasattr(e, 'errors') else None
+            })
+        return False
+        
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        if rabbit_url:
+            _send_to_dlq(message_body, rabbit_url, {
+                "reason": "unexpected_error",
+                "error": str(e),
+                "exception_type": type(e).__name__
+            })
+        return False
+
+
+def _send_to_dlq(message_body: bytes, rabbit_url: str, error_info: dict):
+    """Вспомогательная функция для отправки в DLQ"""
+    try:
+        from shared.rabbit import publish_to_dlq
+        publish_to_dlq(rabbit_url, message_body, error_info)
+        logger.info(f"Message sent to DLQ: {error_info['reason']}")
+    except Exception as dlq_error:
+        logger.error(f"Failed to send to DLQ: {dlq_error}")

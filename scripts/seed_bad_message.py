@@ -14,45 +14,18 @@ from shared.rabbit import RabbitMQProducer
 from api.config import Config
 
 
-def send_bad_message():
-    """Отправляет тестовое плохое сообщение"""
+def send_malformed_json():
+    """Отправка битого JSON"""
     producer = RabbitMQProducer(Config.RABBIT_URL)
     
-    # Пример "плохого" сообщения (невалидный JSON, но в байтах)
-    bad_message = {
-        "event_id": "test-bad-message-001",
-        "schema_version": 1,
-        "event_type": "malformed_event",
-        "source": "test_script",
-        "occurred_at": "2024-01-15T10:30:00Z",
-        "payload": {
-            "malformed": True,
-            "invalid_field": b"binary data that might break things",  # Несериализуемо в JSON
-            "nested": {
-                "deeply": {
-                    "recursive": "..." * 10000  # Очень большая строка
-                }
-            }
-        }
-    }
+    # Битый JSON
+    bad_json = b'{"event_id": "test-bad-json", "event_type": "test", "occurred_at": "2024-01-15T10:30:00Z", invalid json'
     
-    # Намеренно портим JSON
-    message_body = json.dumps(bad_message).encode('utf-8')
-    # Добавляем лишние байты в конец
-    message_body += b"invalid bytes at the end"
-    
-    try:
-        producer.publish(
-            queue_name=Config.RABBIT_QUEUE_EVENTS,
-            message_body=message_body
-        )
-        print(f"✓ Sent bad message to queue '{Config.RABBIT_QUEUE_EVENTS}'")
-        print(f"  Message ID: {bad_message['event_id']}")
-        print(f"  Note: This message will likely fail during processing")
-        
-    except Exception as e:
-        print(f"✗ Failed to send message: {e}")
-        sys.exit(1)
+    producer.publish(
+        queue_name=Config.RABBIT_QUEUE_EVENTS,
+        message_body=bad_json
+    )
+    print("Sent malformed JSON to queue")
 
 
 def send_valid_message_for_test():
@@ -92,7 +65,7 @@ if __name__ == '__main__':
     
     # Отправляем оба типа сообщений
     send_valid_message_for_test()
-    send_bad_message()
+    send_malformed_json()
     
     print("\n" + "=" * 50)
     print("Done! Check RabbitMQ management console:")

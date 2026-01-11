@@ -4,6 +4,7 @@ import logging
 from typing import Optional, Callable
 from pika.adapters.blocking_connection import BlockingChannel
 from pika.spec import BasicProperties
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,34 @@ class RabbitMQProducer:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+def publish_to_dlq(rabbit_url: str, original_message: bytes, error_info: dict, queue_name: str = "events.dlq"):
+    """Публикация сообщения в Dead Letter Queue
+    Args:
+    rabbit_url: URL RabbitMQ
+    original_message: Оригинальное сообщение (bytes)
+    error_info: Информация об ошибке (dict)
+    queue_name: Имя DLQ (по умолчанию 'events.dlq')
+    """
+    # Формируем обогащенное сообщение для DLQ
+    dlq_message = {
+        "original_message": original_message.decode('utf-8', errors='replace'),
+        "error_info": error_info,
+        "timestamp": datetime.utcnow().isoformat(),
+        "queue": "events"
+    }
+        
+    # Публикуем в DLQ
+    producer = RabbitMQProducer(rabbit_url)
+    producer.publish(
+        queue_name=queue_name,
+        message_body=json.dumps(dlq_message).encode('utf-8'),
+        headers={
+            "x-death-reason": error_info.get("reason", "unknown"),
+            "x-original-queue": "events"
+        }
+    )
+    producer.close()
 
 class RabbitMQConsumer:
     """Консьюмер для чтения сообщений из RabbitMQ"""
