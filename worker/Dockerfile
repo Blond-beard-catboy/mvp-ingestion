@@ -24,6 +24,9 @@ COPY worker/ ./worker/
 COPY shared/ ./shared/
 COPY .env.example .env
 
+# В api/Dockerfile и worker/Dockerfile добавить
+COPY migrations /app/migrations/
+
 # Устанавливаем переменные окружения
 ENV PATH=/root/.local/bin:$PATH
 ENV PYTHONPATH=/app

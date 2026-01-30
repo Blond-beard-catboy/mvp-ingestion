@@ -242,3 +242,34 @@ http://localhost:15672/#/queues (guest/guest)
 - DLQ не очищается автоматически
 - Частые попадания в DLQ указывают на проблемы с клиентами
 
+
+### 10. **Тестирование миграций**
+
+```bash
+# Останавливаем все контейнеры и удаляем данные
+docker-compose down -v
+
+# Запускаем с нуля
+docker-compose up --build -d
+
+# Проверяем миграции
+docker-compose exec api alembic current
+docker-compose exec api alembic history
+
+# Проверяем таблицу
+docker-compose exec postgres psql -U postgres -d events_db -c "\dt events"
+docker-compose exec postgres psql -U postgres -d events_db -c "\d events"
+
+# Тестируем отправку события
+curl -X POST http://localhost:5000/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema_version": 1,
+    "event_type": "migration_test",
+    "source": "alembic",
+    "occurred_at": "2024-01-15T12:00:00Z",
+    "payload": {"test": "migration_works"}
+  }'
+
+# Проверяем данные в таблице
+docker-compose exec postgres psql -U postgres -d events_db -c "SELECT * FROM events;"

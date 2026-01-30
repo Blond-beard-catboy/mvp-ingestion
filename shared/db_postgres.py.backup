@@ -63,7 +63,7 @@ class PostgresClient:
              %(occurred_at)s, %(payload)s)
         ON CONFLICT (event_id) 
         DO NOTHING
-        RETURNING event_id;
+        RETURNING id;
         """
         
         params = {

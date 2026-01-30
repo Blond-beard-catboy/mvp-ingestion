@@ -1,13 +1,12 @@
 version: '3.8'
 
 services:
-  # Инфраструктура (уже есть)
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
     container_name: ingestion-rabbitmq
     ports:
-      - "5672:5672"    # AMQP протокол
-      - "15672:15672"  # Web UI
+      - "5672:5672"
+      - "15672:15672"
     environment:
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest
@@ -32,9 +31,8 @@ services:
       - POSTGRES_DB=events_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U events_user"]
+      test: ["CMD-SHELL", "pg_isready -U events_user -d events_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -53,7 +51,6 @@ services:
       - MYSQL_PASSWORD=password
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
     command: --default-authentication-plugin=mysql_native_password
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
@@ -63,7 +60,6 @@ services:
     networks:
       - ingestion-network
 
-  # API сервис (НОВЫЙ)
   api:
     build:
       context: .
@@ -72,7 +68,6 @@ services:
     ports:
       - "5000:5000"
     environment:
-      # Используем имена сервисов Docker вместо localhost
       - RABBIT_URL=amqp://guest:guest@rabbitmq:5672/
       - POSTGRES_URL=postgresql://events_user:password@postgres:5432/events_db
       - MYSQL_URL=mysql://events_user:password@mysql:3306/events_projection
@@ -81,11 +76,19 @@ services:
       - MAX_BODY_BYTES=1000000
       - FLASK_ENV=production
       - LOG_LEVEL=INFO
+      - JSON_LOGS=true
     depends_on:
       rabbitmq:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Running Alembic migrations...' &&
+        /app/scripts/run_migrations.sh &&
+        echo 'Starting API...' &&
+        python /app/api/app.py
+      "
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -95,14 +98,12 @@ services:
     networks:
       - ingestion-network
 
-  # Worker сервис (НОВЫЙ)
   worker:
     build:
       context: .
       dockerfile: worker/Dockerfile
     container_name: ingestion-worker
     environment:
-      # Используем имена сервисов Docker вместо localhost
       - RABBIT_URL=amqp://guest:guest@rabbitmq:5672/
       - POSTGRES_URL=postgresql://events_user:password@postgres:5432/events_db
       - MYSQL_URL=mysql://events_user:password@mysql:3306/events_projection
@@ -112,13 +113,14 @@ services:
       - WORKER_RECONNECT_DELAY=5
       - MAX_PROCESSING_ATTEMPTS=3
       - LOG_LEVEL=INFO
+      - JSON_LOGS=true
     depends_on:
       rabbitmq:
         condition: service_healthy
       postgres:
         condition: service_healthy
-      api:
-        condition: service_started
+      mysql:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - ingestion-network

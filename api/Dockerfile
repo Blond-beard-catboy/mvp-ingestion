@@ -1,34 +1,40 @@
-FROM python:3.11-slim AS builder
-
-WORKDIR /app
-
-# Копируем зависимости API
-COPY api/requirements.txt .
-
-# Устанавливаем зависимости
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# ===========================================
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Копируем Python зависимости из builder
-COPY --from=builder /root/.local /root/.local
+# Установка системных зависимостей
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
 
-# Копируем код проекта
-COPY api/ ./api/
-COPY shared/ ./shared/
-COPY .env.example .env
+# Копируем requirements и устанавливаем зависимости
+COPY api/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Устанавливаем переменные окружения
-ENV PATH=/root/.local/bin:$PATH
+# Копируем код API
+COPY api/ /app/api/
+COPY shared/ /app/shared/
+
+# Копируем миграции Alembic
+COPY migrations/ /app/migrations/
+
+# Копируем скрипты
+COPY scripts/run_migrations.sh /app/scripts/
+
+# Создаем папку для логов
+RUN mkdir -p /app/logs
+
+# Делаем скрипты исполняемыми
+RUN chmod +x /app/scripts/run_migrations.sh
+
+# Переменные окружения по умолчанию
 ENV PYTHONPATH=/app
-ENV FLASK_APP=api.app
+ENV FLASK_APP=/app/api/app.py
 ENV FLASK_ENV=production
 
-# Порт API
-EXPOSE 5000
+# Запускаем миграции и API
+CMD ["sh", "-c", "/app/scripts/run_migrations.sh && python /app/api/app.py"]
 
-# Запуск приложения
-CMD ["flask", "run", "--host=0.0.0.0", "--port=5000"]
+EXPOSE 5000

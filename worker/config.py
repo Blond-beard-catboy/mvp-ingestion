@@ -2,21 +2,19 @@ import os
 
 class Config:
     # RabbitMQ
-    RABBIT_URL = os.getenv("RABBIT_URL", "amqp://guest:guest@localhost:5672")
-    RABBIT_QUEUE_EVENTS = os.getenv("RABBIT_QUEUE_EVENTS", "events")
-    RABBIT_QUEUE_DLQ = os.getenv("RABBIT_QUEUE_DLQ", "events.dlq")
+    RABBIT_URL = os.environ.get('RABBIT_URL', 'amqp://guest:guest@localhost:5672/')
+    RABBIT_QUEUE_EVENTS = os.environ.get('RABBIT_QUEUE_EVENTS', 'events')
+    RABBIT_QUEUE_DLQ = os.environ.get('RABBIT_QUEUE_DLQ', 'events.dlq')
     
-    # PostgreSQL
-    POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://events_user:password@localhost:5432/events_db")
-    
-    # MySQL
-    MYSQL_URL = os.getenv("MYSQL_URL", "mysql://events_user:password@localhost:3306/events_projection")
+    # Databases
+    POSTGRES_URL = os.environ.get('POSTGRES_URL', 'postgresql://events_user:password@localhost:5432/events_db')
+    MYSQL_URL = os.environ.get('MYSQL_URL', 'mysql://root:root@localhost:3306/events_projection')
     
     # Worker settings
-    WORKER_PREFETCH_COUNT = int(os.getenv("WORKER_PREFETCH_COUNT", "1"))
-    WORKER_RECONNECT_DELAY = int(os.getenv("WORKER_RECONNECT_DELAY", "5"))
-    MAX_PROCESSING_ATTEMPTS = int(os.getenv("MAX_PROCESSING_ATTEMPTS", "3"))
+    WORKER_PREFETCH_COUNT = int(os.environ.get('WORKER_PREFETCH_COUNT', 1))
+    WORKER_RECONNECT_DELAY = int(os.environ.get('WORKER_RECONNECT_DELAY', 5))
+    MAX_PROCESSING_ATTEMPTS = int(os.environ.get('MAX_PROCESSING_ATTEMPTS', 3))
     
     # Logging
-    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-    LOG_FORMAT = os.getenv("LOG_FORMAT", "plain")  # 'plain' или 'json'
+    LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
+    JSON_LOGS = os.environ.get('JSON_LOGS', 'true').lower() == 'true'
